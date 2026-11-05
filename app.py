@@ -77,7 +77,38 @@ def masked_preview(frame: pd.DataFrame, pii_report: pd.DataFrame, n: int = 8) ->
             if col in preview.columns:
                 preview[col] = "[masked by SynthGuard]"
     return preview
+    
+def plot_distance_histogram(distances, title):
+    """Render privacy distance distributions using Matplotlib."""
+    values = np.asarray(distances, dtype=float)
+    values = values[np.isfinite(values)]
 
+    fig, ax = plt.subplots(figsize=(7, 3.5))
+
+    if len(values) > 0:
+        ax.hist(
+            values,
+            bins=10,
+            edgecolor="black",
+            alpha=0.75
+        )
+        ax.set_ylabel("Number of records")
+        ax.set_xlabel("Nearest-record distance")
+    else:
+        ax.text(
+            0.5, 0.5,
+            "No distance data available",
+            ha="center",
+            va="center",
+            transform=ax.transAxes
+        )
+
+    ax.set_title(title)
+    ax.grid(axis="y", alpha=0.2)
+    fig.tight_layout()
+
+    st.pyplot(fig, clear_figure=True)
+    plt.close(fig)
 
 def clean_report_markdown(result: dict) -> str:
     util = result["utility"]
@@ -453,39 +484,111 @@ with tab_quality:
                           "synthetic-trained": utility["synthetic_secondary"].get(metric_name)})
     st.dataframe(pd.DataFrame(util_rows), use_container_width=True, hide_index=True)
 
+
 with tab_privacy:
     st.subheader("Privacy-risk screening")
+
     p1, p2, p3 = st.columns(3)
-    p1.metric("Exact full-row overlap", f"{result['privacy']['exact_overlap_pct']:.2f}%")
-    p2.metric("Synthetic near-record share", f"{result['privacy']['synthetic_near_share_pct']:.1f}%")
-    p3.metric("Near-distance cutoff", f"{result['privacy']['near_cutoff']:.2f}")
-    st.write(f"Median nearest distance — synthetic: **{result['privacy']['synthetic_median_nearest_distance']:.3f}**; held-out real: **{result['privacy']['heldout_median_nearest_distance']:.3f}**.")
+
+    p1.metric(
+        "Exact full-row overlap",
+        f"{result['privacy']['exact_overlap_pct']:.2f}%"
+    )
+
+    p2.metric(
+        "Synthetic near-record share",
+        f"{result['privacy']['synthetic_near_share_pct']:.1f}%"
+    )
+
+    p3.metric(
+        "Near-distance cutoff",
+        f"{result['privacy']['near_cutoff']:.2f}"
+    )
+
+    st.write(
+        f"Median nearest distance — synthetic: "
+        f"**{result['privacy']['synthetic_median_nearest_distance']:.3f}**; "
+        f"held-out real: "
+        f"**{result['privacy']['heldout_median_nearest_distance']:.3f}**."
+    )
+
+    # Privacy distance distributions
     s1, s2 = st.columns(2)
+
     with s1:
         st.markdown("**Synthetic-to-training nearest distance**")
-        counts, edges = np.histogram(result["privacy"]["synthetic_nearest_distances"], bins=10)
-        labels = [f"{edges[i]:.2f}–{edges[i+1]:.2f}" for i in range(len(counts))]
-        st.bar_chart(pd.DataFrame({"Distance band": labels, "Count": counts}).set_index("Distance band"), use_container_width=True)
+
+        plot_distance_histogram(
+            result["privacy"]["synthetic_nearest_distances"],
+            "Synthetic records vs training records"
+        )
+
     with s2:
         st.markdown("**Held-out-real-to-training nearest distance**")
-        counts, edges = np.histogram(result["privacy"]["heldout_nearest_distances"], bins=10)
-        labels = [f"{edges[i]:.2f}–{edges[i+1]:.2f}" for i in range(len(counts))]
-        st.bar_chart(pd.DataFrame({"Distance band": labels, "Count": counts}).set_index("Distance band"), use_container_width=True)
-    st.warning(result["privacy"]["warning"])
-    st.caption(f"Distance comparisons were capped at a sample of {result['privacy']['comparison_rows_sampled']} records to keep the cloud app responsive.")
 
+        plot_distance_histogram(
+            result["privacy"]["heldout_nearest_distances"],
+            "Held-out real records vs training records"
+        )
+
+    st.warning(result["privacy"]["warning"])
+
+    st.caption(
+        f"Distance comparisons were capped at a sample of "
+        f"{result['privacy']['comparison_rows_sampled']} records "
+        f"to keep the cloud app responsive."
+    )
+
+    st.divider()
+
+    # Bias comparison
     st.subheader("Bias comparison")
+
     bias = result["bias"]
+
     if bias.get("available"):
+
         b1, b2, b3 = st.columns(3)
-        b1.metric("Held-out real pass-rate gap", f"{bias['real_gap_pp']:.1f} pp")
-        b2.metric("Synthetic pass-rate gap", f"{bias['synthetic_gap_pp']:.1f} pp")
-        b3.metric("Absolute gap change", f"{bias['absolute_gap_change_pp']:.1f} pp")
-        st.dataframe(result["bias_table"], use_container_width=True, hide_index=True)
-        st.caption(f"Positive outcome: `{result['target']} ≥ {bias['positive_outcome_threshold']}`. Group attribute: `{bias['group_column']}`.")
+
+        b1.metric(
+            "Held-out real pass-rate gap",
+            f"{bias['real_gap_pp']:.1f} pp"
+        )
+
+        b2.metric(
+            "Synthetic pass-rate gap",
+            f"{bias['synthetic_gap_pp']:.1f} pp"
+        )
+
+        b3.metric(
+            "Absolute gap change",
+            f"{bias['absolute_gap_change_pp']:.1f} pp"
+        )
+
+        st.markdown("**Group-wise bias evaluation**")
+
+        st.dataframe(
+            result["bias_table"],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.caption(
+            f"Positive outcome: `{result['target']} >= "
+            f"{bias['positive_outcome_threshold']}`. "
+            f"Group attribute: `{bias['group_column']}`."
+        )
+
         st.warning(bias["warning"])
+
     else:
-        st.info(bias.get("reason", "Bias comparison was not available for this dataset configuration."))
+        st.info(
+            bias.get(
+                "reason",
+                "Bias comparison was not available for this dataset configuration."
+            )
+        )
+
 
 with tab_export:
     st.subheader("Export artifacts")
